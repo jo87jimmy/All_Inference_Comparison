@@ -56,13 +56,13 @@ import matplotlib.pyplot as plt
 
 # %%
 # ===========================
-# 3. 下載 INFERENCE_COMPARISON 專案
+# 3. 下載 All_Inference_Comparison 專案
 # ===========================
 
-REPO_DIR = "INFERENCE_COMPARISON"
+REPO_DIR = "All_Inference_Comparison"
 
 if not os.path.exists(REPO_DIR):
-    !git clone https://github.com/jo87jimmy/INFERENCE_COMPARISON.git
+    !git clone https://github.com/jo87jimmy/All_Inference_Comparison.git
 else:
     print(f"✅ '{REPO_DIR}' 已存在，跳過 clone。")
 
@@ -86,23 +86,23 @@ def create_symlink(src, dst):
         print(f"❌ 錯誤：找不到 {src}，請確認 Kaggle 資料集是否已正確掛載。")
 
 # --- MVTec Dataset ---
-MVTEC_PATH = "/kaggle/input/data-mvtec/mvtec"
+MVTEC_PATH = "/kaggle/input/datasets/jo87jimmy/data-mvtec"
 create_symlink(MVTEC_PATH, "mvtec")
 
 # --- DRAEM Teacher Checkpoints ---
-DRAEM_CP_PATH = "/kaggle/input/draem-checkpoints/DRAEM_checkpoints"
+DRAEM_CP_PATH = "/kaggle/input/datasets/jo87jimmy/draem-checkpoints"
 create_symlink(DRAEM_CP_PATH, "DRAEM_checkpoints")
 
 # --- Student Model Checkpoints (我們的模型) ---
-STUDENT_CP_PATH = "/kaggle/input/student-model-checkpoints"
+STUDENT_CP_PATH = "/kaggle/input/datasets/jo87jimmy/student-model-checkpoints"
 create_symlink(STUDENT_CP_PATH, "student_model_checkpoints")
 
 # --- PatchCore Checkpoints ---
-PATCHCORE_PATH = "/kaggle/input/patchcore"  # ← 請依實際 Kaggle dataset 名稱修改
+PATCHCORE_PATH = "/kaggle/input/datasets/jo87jimmy/patchcore"  # ← 請依實際 Kaggle dataset 名稱修改
 create_symlink(PATCHCORE_PATH, "PatchCore")
 
 # --- EfficientAD Checkpoints ---
-EFFICIENTAD_PATH = "/kaggle/input/efficientad"  # ← 請依實際 Kaggle dataset 名稱修改
+EFFICIENTAD_PATH = "/kaggle/input/datasets/jo87jimmy/efficientad"  # ← 請依實際 Kaggle dataset 名稱修改
 create_symlink(EFFICIENTAD_PATH, "EfficientAD")
 
 # %%
