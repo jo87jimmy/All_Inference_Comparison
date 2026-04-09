@@ -1,0 +1,31 @@
+# 权重和模型文件
+*.weights
+*.h5
+*.hdf5
+*.ckpt
+*.pth
+*.pckl
+*.pt
+*.pkl
+*.joblib
+*.pb
+*.onnx
+*.bin
+*.model
+*.pickle
+*.npz
+
+# 训练输出目录
+weights/
+checkpoints/
+models/
+logs/
+runs/
+outputs/
+
+# 数据文件
+*.npy
+*.npz
+*.pkl
+data/
+dataset/
