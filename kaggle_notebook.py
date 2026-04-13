@@ -79,11 +79,36 @@ def create_symlink(src, dst):
         os.remove(dst)
         print(f"🗑️ 已移除舊的連結: {dst}")
 
-    if os.path.exists(src):
-        os.symlink(src, dst)
-        print(f"✅ 已成功將 {src} 連結至 {dst}")
+    # Kaggle 資料集有時會多包一層同名字料夾，自動檢測
+    dir_name = os.path.basename(dst)
+    nested_src1 = os.path.join(src, dir_name)
+    nested_src2 = os.path.join(src, os.path.basename(src))
+    
+    # 判斷真實的路徑
+    if os.path.isdir(nested_src1):
+        actual_src = nested_src1
+    elif os.path.isdir(nested_src2):
+        actual_src = nested_src2
     else:
-        print(f"❌ 錯誤：找不到 {src}，請確認 Kaggle 資料集是否已正確掛載。")
+        # 有時候上傳時只含一個資料夾但名稱不同，例如 data-mvtec 裡面只有一個 mvtec
+        contents = os.listdir(src) if os.path.exists(src) else []
+        if len(contents) == 1 and os.path.isdir(os.path.join(src, contents[0])):
+            potential_src = os.path.join(src, contents[0])
+            # 但要注意：如果裡面唯一的是 'bottle' 等物件分類，就不能再往內退一層！
+            # 這裡簡單判斷：如果 contents[0] 是 MVTec 的分類之一 (如 'bottle', 'cable' 等)，就不要當作被打包的資料夾
+            # 我們假設若名稱不是 bottle 等物件類別，才往下退一層。
+            if contents[0] not in ["bottle", "cable", "capsule", "carpet", "grid", "hazelnut", "leather", "metal_nut", "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper"]:
+                actual_src = potential_src
+            else:
+                actual_src = src
+        else:
+            actual_src = src
+
+    if os.path.exists(actual_src):
+        os.symlink(actual_src, dst)
+        print(f"✅ 已成功將 {actual_src} 連結至 {dst}")
+    else:
+        print(f"❌ 錯誤：找不到 {actual_src} (或 {src})，請確認 Kaggle 資料集是否已正確掛載。")
 
 # --- MVTec Dataset ---
 MVTEC_PATH = "/kaggle/input/datasets/jo87jimmy/data-mvtec"
