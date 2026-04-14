@@ -37,8 +37,8 @@ import torch
 # 在此進行猴子補丁 (monkey-patch)，讓未指定 weights_only 的 load 回退使用 weights_only=False。
 _orig_torch_load = torch.load
 def _safe_torch_load(*args, **kwargs):
-    if "weights_only" not in kwargs:
-        kwargs["weights_only"] = False
+    # 強制覆蓋為 False，因為 pytorch_lightning 內部會顯式傳入 weights_only=True
+    kwargs["weights_only"] = False
     return _orig_torch_load(*args, **kwargs)
 torch.load = _safe_torch_load
 
