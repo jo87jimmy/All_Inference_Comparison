@@ -31,6 +31,17 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
         pass
 
 import torch
+
+# 💡 針對 PyTorch 2.6+ 修改 torch.load 預設為 weights_only=True 導致 
+# 載入 anomalib Lightning checkpoints (PatchCore, EfficientAD) 失敗的問題：
+# 在此進行猴子補丁 (monkey-patch)，讓未指定 weights_only 的 load 回退使用 weights_only=False。
+_orig_torch_load = torch.load
+def _safe_torch_load(*args, **kwargs):
+    if "weights_only" not in kwargs:
+        kwargs["weights_only"] = False
+    return _orig_torch_load(*args, **kwargs)
+torch.load = _safe_torch_load
+
 import numpy as np
 import random
 import argparse
