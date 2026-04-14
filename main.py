@@ -195,8 +195,8 @@ class MVTecTestDataset(torch.utils.data.Dataset):
 
         # ── 產生不同前處理版本 ──
 
-        # (A) DRAEM 系列: resize → [0,1] → CHW
-        img_256 = cv2.resize(img_rgb, (self.resize, self.resize)).astype(np.float32) / 255.0
+        # (A) DRAEM 系列: resize → [0,1] → CHW (⚠️ 修正: DRAEM 原始訓練使用 cv2.imread 讀取 BGR，故此處餵入 BGR 而非 RGB)
+        img_256 = cv2.resize(img_bgr, (self.resize, self.resize)).astype(np.float32) / 255.0
         img_256 = np.transpose(img_256, (2, 0, 1))  # (3, 256, 256)
 
         # (B) PatchCore: resize → center crop 224 → ImageNet normalize
@@ -275,9 +275,12 @@ class DRAEMRunner:
         joined = torch.cat((gray_rec, img), dim=1)
         out_mask = self.seg_model(joined)
         out_mask_sm = torch.softmax(out_mask, dim=1)
-        # anomaly score = 異常通道 (channel=1) 的最大值
-        anomaly_map = out_mask_sm[:, 1, :, :]
-        score = anomaly_map.reshape(anomaly_map.shape[0], -1).max(dim=1)[0]
+        # ⚠️ 修正: 根據 DRAEM 官方與 ARAD_PIP_EVAL，需經過 21x21 的 avg_pool2d 平滑化後再取最大值
+        anomaly_map = out_mask_sm[:, 1:, :, :]
+        out_mask_averaged = torch.nn.functional.avg_pool2d(
+            anomaly_map, 21, stride=1, padding=21 // 2
+        )
+        score = out_mask_averaged.reshape(out_mask_averaged.shape[0], -1).max(dim=1)[0]
         return score.cpu().numpy()
 
     def warmup(self):
