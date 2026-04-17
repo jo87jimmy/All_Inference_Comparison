@@ -208,11 +208,9 @@ class MVTecTestDataset(torch.utils.data.Dataset):
         for c in range(3):
             img_pc[c] = (img_pc[c] - self.IMAGENET_MEAN[c]) / self.IMAGENET_STD[c]
 
-        # (C) EfficientAD: resize 256 → RGB [0,1] → ImageNet Normalize (因繞過 anomalib transform，需手動正規化)
+        # (C) EfficientAD: resize 256 → RGB [0,1] (anomalib 模型在訓練時不依賴 ImageNet Norm，而是直接餵入 [0,1] 影像)
         img_ead = cv2.resize(img_rgb, (self.resize, self.resize)).astype(np.float32) / 255.0
         img_ead = np.transpose(img_ead, (2, 0, 1))  # (3, 256, 256)
-        for c in range(3):
-            img_ead[c] = (img_ead[c] - self.IMAGENET_MEAN[c]) / self.IMAGENET_STD[c]
 
         # mask resize to 256
         mask_256 = cv2.resize(mask, (self.resize, self.resize))
@@ -515,7 +513,7 @@ def benchmark_runner(runner, dataloader, n_repeat=3):
 
     # 計算 AUROC
     if len(set(all_labels)) > 1:
-        auroc = roc_auc_score(all_labels, all_scores)
+        auroc = float(roc_auc_score(all_labels, all_scores))
     else:
         auroc = float("nan")
         print(f"    ⚠️ 只有單一類別的標籤，無法計算 AUROC")
