@@ -208,9 +208,11 @@ class MVTecTestDataset(torch.utils.data.Dataset):
         for c in range(3):
             img_pc[c] = (img_pc[c] - self.IMAGENET_MEAN[c]) / self.IMAGENET_STD[c]
 
-        # (C) EfficientAD: resize 256 → RGB [0,1] (anomalib 內部會自動做 ImageNet Normalize)
+        # (C) EfficientAD: resize 256 → RGB [0,1] → ImageNet Normalize (因繞過 anomalib transform，需手動正規化)
         img_ead = cv2.resize(img_rgb, (self.resize, self.resize)).astype(np.float32) / 255.0
         img_ead = np.transpose(img_ead, (2, 0, 1))  # (3, 256, 256)
+        for c in range(3):
+            img_ead[c] = (img_ead[c] - self.IMAGENET_MEAN[c]) / self.IMAGENET_STD[c]
 
         # mask resize to 256
         mask_256 = cv2.resize(mask, (self.resize, self.resize))
@@ -359,6 +361,8 @@ class PatchCoreRunner:
             # 嘗試直接取最大值
             score = output.reshape(output.shape[0], -1).max(dim=1)[0]
 
+        # 確保 score 為 1D (batch_size,)，避免 tolist() 產生 nested list
+        score = score.view(-1)
         return score.detach().cpu().numpy()
 
     def warmup(self):
@@ -429,6 +433,8 @@ class EfficientADRunner:
         else:
             score = output.reshape(output.shape[0], -1).max(dim=1)[0]
 
+        # 確保 score 為 1D (batch_size,)，避免 tolist() 產生 nested list
+        score = score.view(-1)
         return score.detach().cpu().numpy()
 
     def warmup(self):
