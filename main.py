@@ -208,11 +208,9 @@ class MVTecTestDataset(torch.utils.data.Dataset):
         for c in range(3):
             img_pc[c] = (img_pc[c] - self.IMAGENET_MEAN[c]) / self.IMAGENET_STD[c]
 
-        # (C) EfficientAD: resize 256 → ImageNet normalize
+        # (C) EfficientAD: resize 256 → RGB [0,1] (anomalib 內部會自動做 ImageNet Normalize)
         img_ead = cv2.resize(img_rgb, (self.resize, self.resize)).astype(np.float32) / 255.0
         img_ead = np.transpose(img_ead, (2, 0, 1))  # (3, 256, 256)
-        for c in range(3):
-            img_ead[c] = (img_ead[c] - self.IMAGENET_MEAN[c]) / self.IMAGENET_STD[c]
 
         # mask resize to 256
         mask_256 = cv2.resize(mask, (self.resize, self.resize))
