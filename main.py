@@ -409,27 +409,18 @@ class EfficientADRunner:
     def infer_batch(self, batch):
         """
         EfficientAD 推論:
-          teacher-student 差異 + autoencoder 差異 → anomaly map → score
+          使用 anomalib 官方的 lightning_model 進行前向傳播，
+          確保使用完整的 pre-processor 與 post-processor（包含 ImageNet norm 與 quantile norm），
+          以獲得正確的 anomaly score。
         """
         img = batch["image_ead"].to(self.device)
-        output = self.model(img)
-
-        if hasattr(output, "anomaly_map"):
-            score = output.pred_score
-            if score is None:
-                amap = output.anomaly_map
-                score = amap.reshape(amap.shape[0], -1).max(dim=1)[0]
-        elif isinstance(output, tuple):
-            anomaly_map = output[0]
-            score = anomaly_map.reshape(anomaly_map.shape[0], -1).max(dim=1)[0]
-        elif isinstance(output, dict):
-            anomaly_map = output.get("anomaly_map", output.get("map", None))
-            if anomaly_map is not None:
-                score = anomaly_map.reshape(anomaly_map.shape[0], -1).max(dim=1)[0]
-            else:
-                raise ValueError(f"EfficientAD output keys: {output.keys()}")
-        else:
-            score = output.reshape(output.shape[0], -1).max(dim=1)[0]
+        
+        # ⚠️ 修正: 不要繞過 lightning_model！
+        # 直接呼叫 self.lightning_model(img) 返回 InferenceBatch，
+        # 其中已經包含經過完整後處理的 pred_score。
+        output = self.lightning_model(img)
+        
+        score = output.pred_score
 
         # 確保 score 為 1D (batch_size,)，避免 tolist() 產生 nested list
         score = score.view(-1)
@@ -439,7 +430,8 @@ class EfficientADRunner:
         dummy = torch.randn(1, 3, 256, 256).to(self.device)
         with torch.no_grad():
             for _ in range(10):
-                self.model(dummy)
+                # 暖機也應一併跑完整個 lightning 模型包含的前後處理流程
+                self.lightning_model(dummy)
         cuda_sync()
 
     def get_model_info(self):
