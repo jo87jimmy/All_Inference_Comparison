@@ -279,7 +279,7 @@ class DRAEMRunner:
             anomaly_map, 21, stride=1, padding=21 // 2
         )
         score = out_mask_averaged.reshape(out_mask_averaged.shape[0], -1).max(dim=1)[0]
-        return score.cpu().numpy()
+        return score.cpu().numpy(), anomaly_map.detach().cpu().numpy()
 
     def warmup(self):
         """暖機"""
@@ -361,7 +361,16 @@ class PatchCoreRunner:
 
         # 確保 score 為 1D (batch_size,)，避免 tolist() 產生 nested list
         score = score.view(-1)
-        return score.detach().cpu().numpy()
+        
+        # 嘗試取得 amap
+        if hasattr(output, "anomaly_map"):
+            amap_np = output.anomaly_map.detach().cpu().numpy()
+        elif isinstance(output, tuple):
+            amap_np = output[0].detach().cpu().numpy()
+        else:
+            amap_np = None
+
+        return score.detach().cpu().numpy(), amap_np
 
     def warmup(self):
         """暖機"""
@@ -424,7 +433,8 @@ class EfficientADRunner:
 
         # 確保 score 為 1D (batch_size,)，避免 tolist() 產生 nested list
         score = score.view(-1)
-        return score.detach().cpu().numpy()
+        amap_np = output.anomaly_map.detach().cpu().numpy()
+        return score.detach().cpu().numpy(), amap_np
 
     def warmup(self):
         dummy = torch.randn(1, 3, 256, 256).to(self.device)
@@ -480,17 +490,20 @@ def benchmark_runner(runner, dataloader, n_repeat=3):
     print(f"    ⏱️  推論中 (重複 {n_repeat} 次)...")
     all_scores = []
     all_labels = []
+    all_amaps = []
+    all_masks = []
     all_times = []
 
     with torch.no_grad():
         for repeat_idx in range(n_repeat):
             for batch in dataloader:
                 label = batch["label"].numpy()
+                mask = batch["mask"].numpy()  # Extract GT mask
 
                 cuda_sync()
                 start = time.perf_counter()
 
-                score = runner.infer_batch(batch)
+                score, amap = runner.infer_batch(batch)
 
                 cuda_sync()
                 end = time.perf_counter()
@@ -498,17 +511,60 @@ def benchmark_runner(runner, dataloader, n_repeat=3):
                 elapsed_ms = (end - start) * 1000.0
                 all_times.append(elapsed_ms)
 
-                # 只在第一輪收集 score/label（避免重複）
+                # 只在第一輪收集 score/label/mask/amap（避免重複）
                 if repeat_idx == 0:
                     all_scores.extend(score.tolist())
                     all_labels.extend(label.tolist())
+                    if amap is not None:
+                        # 確保 amap 大小與 mask 一致 (B, H, W)
+                        if amap.ndim == 4:
+                            amap = amap[:, 0, :, :]
+                        if amap.ndim == 3 and (amap.shape[1] != mask.shape[1] or amap.shape[2] != mask.shape[2]):
+                            import torch.nn.functional as F
+                            amap_t = torch.tensor(amap).unsqueeze(1)
+                            amap_t = F.interpolate(amap_t, size=(mask.shape[1], mask.shape[2]), mode="bilinear", align_corners=False)
+                            amap = amap_t.squeeze(1).numpy()
+                        all_amaps.append(amap)
+                    all_masks.append(mask)
 
-    # 計算 AUROC
+    # 計算 Image-AUROC
     if len(set(all_labels)) > 1:
         auroc = float(roc_auc_score(all_labels, all_scores))
     else:
         auroc = float("nan")
-        print(f"    ⚠️ 只有單一類別的標籤，無法計算 AUROC")
+        print(f"    ⚠️ 只有單一類別的標籤，無法計算 Image-AUROC")
+
+    # 計算 Pixel-AUROC & PRO-score
+    pixel_auroc = float("nan")
+    pro_score = float("nan")
+    if len(all_masks) > 0 and len(all_amaps) > 0:
+        # Concatenate all batches
+        all_masks_np = np.concatenate(all_masks, axis=0)
+        all_amaps_np = np.concatenate(all_amaps, axis=0)
+
+        # Check if GT masks have both 0 and 1
+        if len(np.unique(all_masks_np)) > 1:
+            try:
+                from torchmetrics.classification import BinaryAUROC
+                from anomalib.metrics.aupro import _AUPRO
+                
+                # Pixel AUROC computation
+                metric_auroc = BinaryAUROC().to(runner.device)
+                preds_t = torch.tensor(all_amaps_np).flatten().to(runner.device)
+                target_t = torch.tensor(all_masks_np).flatten().to(runner.device).long()
+                pixel_auroc = metric_auroc(preds_t, target_t).item()
+                
+                print(f"    ⏳ 計算 PRO-score 中 (可能需要稍候)...")
+                # PRO-score computation
+                metric_pro = _AUPRO().to(runner.device)
+                pro_preds = torch.tensor(all_amaps_np).unsqueeze(1).to(runner.device)
+                pro_target = torch.tensor(all_masks_np).unsqueeze(1).to(runner.device)
+                metric_pro.update(pro_preds, pro_target)
+                pro_score = metric_pro.compute().item()
+            except Exception as e:
+                print(f"    ⚠️ 計算 Pixel-AUROC/PRO 失敗: {e}")
+        else:
+            print(f"    ⚠️ 所有像素標籤單一，無法計算 Pixel metrics")
 
     # 計算推論效率指標
     total_images = len(all_times)
@@ -517,13 +573,18 @@ def benchmark_runner(runner, dataloader, n_repeat=3):
     std_time_ms = np.std(all_times)
     fps = total_images / total_time_s if total_time_s > 0 else 0
 
-    print(f"    ✅ AUROC: {auroc:.4f}")
+    print(f"    ✅ Image-AUROC: {auroc:.4f}")
+    if not np.isnan(pixel_auroc):
+        print(f"    ✅ Pixel-AUROC: {pixel_auroc:.4f}")
+        print(f"    ✅ PRO-score:   {pro_score:.4f}")
     print(f"    ✅ Avg Latency: {avg_time_ms:.2f} ± {std_time_ms:.2f} ms")
     print(f"    ✅ FPS: {fps:.1f}")
 
     return {
         "name": runner.name,
         "auroc": auroc,
+        "pixel_auroc": pixel_auroc,
+        "pro_score": pro_score,
         "avg_time_ms": avg_time_ms,
         "std_time_ms": std_time_ms,
         "fps": fps,
@@ -985,6 +1046,8 @@ def main(obj_names, args):
                 json_results[obj_name].append({
                     "name": r["name"],
                     "auroc": float(r["auroc"]) if not np.isnan(r["auroc"]) else None,
+                    "pixel_auroc": float(r["pixel_auroc"]) if "pixel_auroc" in r and not np.isnan(r["pixel_auroc"]) else None,
+                    "pro_score": float(r["pro_score"]) if "pro_score" in r and not np.isnan(r["pro_score"]) else None,
                     "avg_time_ms": float(r["avg_time_ms"]),
                     "std_time_ms": float(r["std_time_ms"]),
                     "fps": float(r["fps"]),
@@ -996,6 +1059,126 @@ def main(obj_names, args):
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_results, f, indent=2, ensure_ascii=False)
         print(f"\n  💾 JSON 結果已儲存: {json_path}")
+
+        # ==========================
+        # 生成 Markdown 表格
+        # ==========================
+        print(f"\n\n{'=' * 100}")
+        print("  📝 Markdown 比較表格生成")
+        print(f"{'=' * 100}")
+        
+        texture_classes = ["carpet", "grid", "leather", "tile", "wood"]
+        object_classes = ["bottle", "cable", "capsule", "hazelnut", "metal_nut", "pill", "screw", "toothbrush", "transistor", "zipper"]
+        
+        metrics = {"Image-AUROC": "auroc", "Pixel-AUROC": "pixel_auroc", "PRO-score": "pro_score"}
+        md_tables = {}
+        
+        for metric_name, field_name in metrics.items():
+            md = f"### {metric_name} Comparison\n"
+            md += f"| Category | Class | " + " | ".join(method_names) + " |\n"
+            md += f"| --- | --- | " + " | ".join(["---"] * len(method_names)) + " |\n"
+            
+            def get_row(cat, cls):
+                row_str = f"| {cat} | {cls} | "
+                vals = []
+                for m in method_names:
+                    # Find score
+                    score = None
+                    if cls in all_obj_results:
+                        for r in all_obj_results[cls]:
+                            if r["name"] == m and not np.isnan(r.get(field_name, float('nan'))):
+                                score = r[field_name] * 100.0  # Convert to percentage
+                                break
+                    vals.append(score)
+                
+                # Format strong for best
+                max_val = max([v for v in vals if v is not None], default=-1)
+                for v in vals:
+                    if v is None:
+                        row_str += "- | "
+                    elif v == max_val and v > 0:
+                        row_str += f"**{v:.1f}** | "
+                    else:
+                        row_str += f"{v:.1f} | "
+                return row_str + "\n", vals
+            
+            texture_vals_list = {m: [] for m in method_names}
+            for cls in texture_classes:
+                if cls in all_obj_results:
+                    row_md, vals = get_row("Texture", cls)
+                    md += row_md
+                    for m_idx, m in enumerate(method_names):
+                        if vals[m_idx] is not None:
+                            texture_vals_list[m].append(vals[m_idx])
+            
+            # Texture Average
+            t_avg_str = f"| Texture | average | "
+            t_avgs = []
+            for m in method_names:
+                vs = texture_vals_list[m]
+                avg = np.mean(vs) if vs else float('nan')
+                t_avgs.append(avg)
+            max_t = max([v for v in t_avgs if not np.isnan(v)], default=-1)
+            for v in t_avgs:
+                if np.isnan(v):
+                    t_avg_str += "- | "
+                elif v == max_t and v > 0:
+                    t_avg_str += f"**{v:.2f}** | "
+                else:
+                    t_avg_str += f"{v:.2f} | "
+            md += t_avg_str + "\n"
+            
+            object_vals_list = {m: [] for m in method_names}
+            for cls in object_classes:
+                if cls in all_obj_results:
+                    row_md, vals = get_row("Object", cls)
+                    md += row_md
+                    for m_idx, m in enumerate(method_names):
+                        if vals[m_idx] is not None:
+                            object_vals_list[m].append(vals[m_idx])
+                            
+            # Object Average
+            o_avg_str = f"| Object | average | "
+            o_avgs = []
+            for m in method_names:
+                vs = object_vals_list[m]
+                avg = np.mean(vs) if vs else float('nan')
+                o_avgs.append(avg)
+            max_o = max([v for v in o_avgs if not np.isnan(v)], default=-1)
+            for v in o_avgs:
+                if np.isnan(v):
+                    o_avg_str += "- | "
+                elif v == max_o and v > 0:
+                    o_avg_str += f"**{v:.2f}** | "
+                else:
+                    o_avg_str += f"{v:.2f} | "
+            md += o_avg_str + "\n"
+            
+            # Total Average
+            tot_avg_str = f"| **Total Average** | | "
+            tot_avgs = []
+            for i, m in enumerate(method_names):
+                tot = []
+                tot.extend(texture_vals_list[m])
+                tot.extend(object_vals_list[m])
+                avg = np.mean(tot) if tot else float('nan')
+                tot_avgs.append(avg)
+            max_tot = max([v for v in tot_avgs if not np.isnan(v)], default=-1)
+            for v in tot_avgs:
+                if np.isnan(v):
+                    tot_avg_str += "- | "
+                elif v == max_tot and v > 0:
+                    tot_avg_str += f"**{v:.2f}** | "
+                else:
+                    tot_avg_str += f"{v:.2f} | "
+            md += tot_avg_str + "\n\n"
+            
+            md_tables[metric_name] = md
+
+        print("\n".join(md_tables.values()))
+        with open(os.path.join(save_root, "markdown_tables.md"), "w", encoding="utf-8") as f:
+            f.write("\n".join(md_tables.values()))
+        print(f"\n  💾 Markdown 表格已產生並儲存至: {os.path.join(save_root, 'markdown_tables.md')}")
 
     print(f"\n{'=' * 80}")
     print("  🎉 所有比較測試已完成！")
