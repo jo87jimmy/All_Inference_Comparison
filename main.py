@@ -1180,6 +1180,64 @@ def main(obj_names, args):
             f.write("\n".join(md_tables.values()))
         print(f"\n  💾 Markdown 表格已產生並儲存至: {os.path.join(save_root, 'markdown_tables.md')}")
 
+        # ==========================
+        # 生成 Excel 表格
+        # ==========================
+        try:
+            import pandas as pd
+            excel_path = os.path.join(save_root, "metrics_comparison.xlsx")
+            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+                for metric_name, field_name in metrics.items():
+                    rows = []
+                    
+                    def add_cls_row(cat, cls):
+                        row = {"Category": cat, "Class": cls}
+                        for m in method_names:
+                            val = None
+                            if cls in all_obj_results:
+                                for r in all_obj_results[cls]:
+                                    if r["name"] == m and not np.isnan(r.get(field_name, float('nan'))):
+                                        val = round(r[field_name] * 100.0, 2)
+                                        break
+                            row[m] = val
+                        rows.append(row)
+
+                    for cls in texture_classes:
+                        add_cls_row("Texture", cls)
+                        
+                    # Texture Average
+                    t_avg_row = {"Category": "Texture", "Class": "average"}
+                    for m in method_names:
+                        vals = [r[m] for r in rows if r["Category"] == "Texture" and r[m] is not None]
+                        t_avg_row[m] = round(np.mean(vals), 2) if vals else None
+                    rows.append(t_avg_row)
+
+                    start_idx_obj = len(rows)
+                    for cls in object_classes:
+                        add_cls_row("Object", cls)
+                        
+                    # Object Average
+                    o_avg_row = {"Category": "Object", "Class": "average"}
+                    for m in method_names:
+                        vals = [rows[i][m] for i in range(start_idx_obj, len(rows)) if rows[i][m] is not None]
+                        o_avg_row[m] = round(np.mean(vals), 2) if vals else None
+                    rows.append(o_avg_row)
+                    
+                    # Total Average
+                    tot_avg_row = {"Category": "Total Average", "Class": ""}
+                    for m in method_names:
+                        # exclude 'average' rows
+                        vals = [r[m] for r in rows if r["Class"] not in ["average", ""] and r[m] is not None]
+                        tot_avg_row[m] = round(np.mean(vals), 2) if vals else None
+                    rows.append(tot_avg_row)
+                    
+                    df = pd.DataFrame(rows)
+                    df.to_excel(writer, sheet_name=metric_name, index=False)
+                    
+            print(f"\n  📊 Excel 表格已產生並儲存至: {excel_path}")
+        except Exception as e:
+            print(f"\n  ⚠️ 無法產出 Excel 表格，建議確定已透過 pip install pandas openpyxl 安裝套件。錯誤訊息: {e}")
+
     print(f"\n{'=' * 80}")
     print("  🎉 所有比較測試已完成！")
     print(f"  結果儲存於: {os.path.abspath(save_root)}")
