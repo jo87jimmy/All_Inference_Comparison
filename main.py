@@ -542,23 +542,23 @@ def benchmark_runner(runner, dataloader, n_repeat=3):
         all_masks_np = np.concatenate(all_masks, axis=0)
         all_amaps_np = np.concatenate(all_amaps, axis=0)
 
+        # ⚠️ 將 mask 二值化 (避免 cv2.resize 產生的邊緣灰階值被誤判)
+        target_bin = (all_masks_np > 0.5).astype(np.uint8)
+
         # Check if GT masks have both 0 and 1
-        if len(np.unique(all_masks_np)) > 1:
+        if len(np.unique(target_bin)) > 1:
             try:
-                from torchmetrics.classification import BinaryAUROC
                 from anomalib.metrics.aupro import _AUPRO
-                
-                # Pixel AUROC computation
-                metric_auroc = BinaryAUROC().to(runner.device)
-                preds_t = torch.tensor(all_amaps_np).flatten().to(runner.device)
-                target_t = torch.tensor(all_masks_np).flatten().to(runner.device).long()
-                pixel_auroc = metric_auroc(preds_t, target_t).item()
-                
+
+                # Pixel AUROC: 使用 sklearn 以避免 torchmetrics.BinaryAUROC
+                # 對超出 [0,1] 範圍的 preds 自動套 sigmoid 導致飽和 (PatchCore 原始距離會失真)
+                pixel_auroc = float(roc_auc_score(target_bin.flatten(), all_amaps_np.flatten()))
+
                 print(f"    ⏳ 計算 PRO-score 中 (可能需要稍候)...")
                 # PRO-score computation
                 metric_pro = _AUPRO().to(runner.device)
                 pro_preds = torch.tensor(all_amaps_np).unsqueeze(1).to(runner.device)
-                pro_target = torch.tensor(all_masks_np).unsqueeze(1).to(runner.device)
+                pro_target = torch.tensor(target_bin).unsqueeze(1).to(runner.device)
                 metric_pro.update(pro_preds, pro_target)
                 pro_score = metric_pro.compute().item()
             except Exception as e:

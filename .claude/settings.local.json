@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python main.py --help)"
+      "Bash(python main.py --help)",
+      "Bash(python -c \"import anomalib; print\\(anomalib.__version__\\); print\\(anomalib.__file__\\)\")",
+      "Bash(python -c \"from anomalib.models.image.patchcore.torch_model import PatchcoreModel; import inspect; print\\(inspect.getsourcefile\\(PatchcoreModel\\)\\)\")"
     ]
   }
 }
